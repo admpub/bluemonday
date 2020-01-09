@@ -128,12 +128,24 @@ func TestLinks(t *testing.T) {
 			expected: `<a href="?q=1" rel="nofollow">`,
 		},
 		{
+			in:       `<a href="?q=1&r=2">`,
+			expected: `<a href="?q=1&r=2" rel="nofollow">`,
+		},
+		{
+			in:       `<a href="?q=1&r=2&s=:foo@">`,
+			expected: `<a href="?q=1&r=2&s=%3Afoo%40" rel="nofollow">`,
+		},
+		{
 			in:       `<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==" alt="Red dot" />`,
 			expected: `<img alt="Red dot"/>`,
 		},
 		{
 			in:       `<img src="giraffe.gif" />`,
 			expected: `<img src="giraffe.gif"/>`,
+		},
+		{
+			in:       `<img src="giraffe.gif?height=500&width=500" />`,
+			expected: `<img src="giraffe.gif?height=500&width=500"/>`,
 		},
 	}
 
@@ -1585,4 +1597,76 @@ func TestIssue55ScriptTags(t *testing.T) {
 			expected,
 		)
 	}
+}
+
+func TestIssue85NoReferrer(t *testing.T) {
+	p := UGCPolicy()
+	p.AllowAttrs("rel").OnElements("a")
+	p.RequireNoReferrerOnLinks(true)
+	p.AddTargetBlankToFullyQualifiedLinks(true)
+	p.AllowAttrs("target").Matching(Paragraph).OnElements("a")
+
+	tests := []test{
+		{
+			in:       `<a href="/path" />`,
+			expected: `<a href="/path" rel="nofollow noreferrer"/>`,
+		},
+		{
+			in:       `<a href="/path" target="_blank" />`,
+			expected: `<a href="/path" target="_blank" rel="nofollow noreferrer noopener"/>`,
+		},
+		{
+			in:       `<a href="/path" target="foo" />`,
+			expected: `<a href="/path" target="foo" rel="nofollow noreferrer"/>`,
+		},
+		{
+			in:       `<a href="https://www.google.com/" />`,
+			expected: `<a href="https://www.google.com/" rel="nofollow noreferrer noopener" target="_blank"/>`,
+		},
+		{
+			in:       `<a href="https://www.google.com/" target="_blank"/>`,
+			expected: `<a href="https://www.google.com/" target="_blank" rel="nofollow noreferrer noopener"/>`,
+		},
+		{
+			in:       `<a href="https://www.google.com/" rel="nofollow"/>`,
+			expected: `<a href="https://www.google.com/" rel="nofollow noreferrer noopener" target="_blank"/>`,
+		},
+		{
+			in:       `<a href="https://www.google.com/" rel="noopener"/>`,
+			expected: `<a href="https://www.google.com/" rel="noopener nofollow noreferrer" target="_blank"/>`,
+		},
+		{
+			in:       `<a href="https://www.google.com/" rel="noopener nofollow" />`,
+			expected: `<a href="https://www.google.com/" rel="noopener nofollow noreferrer" target="_blank"/>`,
+		},
+		{
+			in:       `<a href="https://www.google.com/" target="foo" />`,
+			expected: `<a href="https://www.google.com/" target="_blank" rel="nofollow noreferrer noopener"/>`,
+		},
+		{
+			in:       `<a href="https://www.google.com/" rel="external"/>`,
+			expected: `<a href="https://www.google.com/" rel="external nofollow noreferrer noopener" target="_blank"/>`,
+		},
+	}
+
+	// These tests are run concurrently to enable the race detector to pick up
+	// potential issues
+	wg := sync.WaitGroup{}
+	wg.Add(len(tests))
+	for ii, tt := range tests {
+		go func(ii int, tt test) {
+			out := p.Sanitize(tt.in)
+			if out != tt.expected {
+				t.Errorf(
+					"test %d failed;\ninput   : %s\noutput  : %s\nexpected: %s",
+					ii,
+					tt.in,
+					out,
+					tt.expected,
+				)
+			}
+			wg.Done()
+		}(ii, tt)
+	}
+	wg.Wait()
 }
